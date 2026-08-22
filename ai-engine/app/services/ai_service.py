@@ -1,38 +1,86 @@
 from app.schemas.chat import ChatRequest, ChatResponse, Slots
 from app.services.slot_service import extract_information
+from app.services.slot_requirements import get_missing_slots
+from app.state.state_store import state_store
 
 
 def process_message(request: ChatRequest) -> ChatResponse:
-    extraction = extract_information(request.message)
+    # Get or create conversation state
+    state = state_store.get_or_create(
+        request.conversation_id
+    )
 
-    intent = extraction.intent
-    slots = extraction.slots
+    # Extract intent and slots from the current message using Qwen
+    extraction = extract_information(
+        request.message
+    )
 
+    # Merge newly extracted information with existing conversation state
+    state.update(
+        intent=extraction.intent,
+        new_slots=extraction.slots,
+    )
+
+    # Get the updated conversation state
+    current_state = state.get_state()
+
+    intent = current_state["intent"]
+    slots = current_state["slots"]
+
+    # Check which required slots are still missing
+    missing_slots = get_missing_slots(
+        intent,
+        slots,
+    )
+
+    # Default responses for intents
     replies = {
-        "greeting": "Hello! Welcome to Project R. How can I help you?",
+        "greeting": "Hello! Welcome to Hotelary. How can I help you?",
         "availability": "Sure! I can help you check room availability.",
         "booking": "Sure! I can help you make a booking.",
         "hotel_information": "I can help you with hotel information.",
         "policy": "I can help you with the hotel's policies.",
         "amenities": "I can help you find information about the hotel's amenities.",
-        "unknown": "I'm not sure I understood that. Could you please rephrase your question.",
+        "unknown": (
+            "I'm not sure I understood that. "
+            "Could you please rephrase your question?"
+        ),
     }
 
+    # If this is a booking and information is missing,
+    # ask for the next required piece of information.
+    if intent == "booking" and missing_slots:
+        next_slot = missing_slots[0]
+
+        questions = {
+            "check_in": "What date would you like to check in?",
+            "check_out": "What date would you like to check out?",
+            "guests": "How many guests will be staying?",
+            "room_type_id": "What type of room would you prefer?",
+            "guest_name": "What name should I use for the booking?",
+            "phone": "What phone number should I use for the booking?",
+        }
+
+        reply = questions.get(
+            next_slot,
+            "Could you provide a little more information?",
+        )
+
+    else:
+        reply = replies.get(
+            intent,
+            replies["unknown"],
+        )
+
+    # Temporary confidence logic.
+    # We will replace this with a proper confidence mechanism later.
     confidence = 0.90 if intent != "unknown" else 0.40
 
     return ChatResponse(
-        reply=replies.get(intent, replies["unknown"]),
+        reply=reply,
         intent=intent,
         confidence=confidence,
         handoff_required=confidence < 0.5,
-        slots=Slots(
-            check_in=slots.check_in,
-            check_out=slots.check_out,
-            guests=slots.guests,
-            room_type_id=slots.room_type_id,
-            guest_name=slots.guest_name,
-            phone=slots.phone,
-            email=slots.email,
-        ),
+        slots=Slots(**slots),
         action=None,
     )
