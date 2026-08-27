@@ -2,6 +2,7 @@ from app.schemas.chat import ChatRequest, ChatResponse, Slots
 from app.services.slot_service import extract_information
 from app.services.slot_requirements import get_missing_slots
 from app.state.state_store import state_store
+from app.rag.rag_service import ask_document
 
 
 def process_message(request: ChatRequest) -> ChatResponse:
@@ -10,18 +11,18 @@ def process_message(request: ChatRequest) -> ChatResponse:
         request.conversation_id
     )
 
-    # Extract intent and slots from the current message using Qwen
+    # Extract intent and slots from the current message
     extraction = extract_information(
         request.message
     )
 
-    # Merge newly extracted information with existing conversation state
+    # Merge newly extracted information with existing state
     state.update(
         intent=extraction.intent,
         new_slots=extraction.slots,
     )
 
-    # Get the updated conversation state
+    # Get updated conversation state
     current_state = state.get_state()
 
     intent = current_state["intent"]
@@ -41,15 +42,26 @@ def process_message(request: ChatRequest) -> ChatResponse:
         "hotel_information": "I can help you with hotel information.",
         "policy": "I can help you with the hotel's policies.",
         "amenities": "I can help you find information about the hotel's amenities.",
+        "document_question": (
+            "I'll look through the provided document "
+            "to find the relevant information."
+        ),
         "unknown": (
             "I'm not sure I understood that. "
             "Could you please rephrase your question?"
         ),
     }
 
-    # If this is a booking and information is missing,
-    # ask for the next required piece of information.
-    if intent == "booking" and missing_slots:
+    # Route document questions to RAG
+    if intent == "document_question":
+        reply = ask_document(
+            hotel_id=request.hotel_id,
+            conversation_id=request.conversation_id,
+            question=request.message,
+        )
+
+    # Handle booking when required information is missing
+    elif intent == "booking" and missing_slots:
         next_slot = missing_slots[0]
 
         questions = {
@@ -66,14 +78,14 @@ def process_message(request: ChatRequest) -> ChatResponse:
             "Could you provide a little more information?",
         )
 
+    # Handle all other intents
     else:
         reply = replies.get(
             intent,
             replies["unknown"],
         )
 
-    # Temporary confidence logic.
-    # We will replace this with a proper confidence mechanism later.
+    # Temporary confidence logic
     confidence = 0.90 if intent != "unknown" else 0.40
 
     return ChatResponse(

@@ -1,6 +1,19 @@
 from typing import Optional
 
 from pydantic import BaseModel
+from typing import Literal
+
+
+IntentType = Literal[
+    "greeting",
+    "availability",
+    "booking",
+    "hotel_information",
+    "policy",
+    "amenities",
+    "document_question",
+    "unknown",
+]
 
 
 class ExtractedSlots(BaseModel):
@@ -14,5 +27,5 @@ class ExtractedSlots(BaseModel):
 
 
 class AIExtraction(BaseModel):
-    intent: str
+    intent: IntentType
     slots: ExtractedSlots
